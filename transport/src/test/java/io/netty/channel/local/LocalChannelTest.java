@@ -46,6 +46,7 @@ import org.junit.Test;
 
 import java.net.ConnectException;
 import java.nio.channels.ClosedChannelException;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executor;
 import java.util.concurrent.TimeUnit;
@@ -171,7 +172,8 @@ public class LocalChannelTest {
             try {
                 cc.writeAndFlush(new Object()).sync();
                 fail("must raise a ClosedChannelException");
-            } catch (Exception e) {
+            } catch (CompletionException cause) {
+                Throwable e = cause.getCause();
                 assertThat(e, is(instanceOf(ClosedChannelException.class)));
                 // Ensure that the actual write attempt on a closed channel was never made by asserting that
                 // the ClosedChannelException has been created by AbstractUnsafe rather than transport implementations.
@@ -196,7 +198,7 @@ public class LocalChannelTest {
                 .channel(LocalServerChannel.class)
                 .childHandler(new SimpleChannelInboundHandler<Object>() {
                     @Override
-                    protected void channelRead0(ChannelHandlerContext ctx, Object msg) throws Exception {
+                    protected void messageReceived(ChannelHandlerContext ctx, Object msg) throws Exception {
                         ctx.close();
                         latch.countDown();
                     }
@@ -211,7 +213,7 @@ public class LocalChannelTest {
                     .channel(LocalChannel.class)
                     .handler(new SimpleChannelInboundHandler<Object>() {
                         @Override
-                        protected void channelRead0(ChannelHandlerContext ctx, Object msg) throws Exception {
+                        protected void messageReceived(ChannelHandlerContext ctx, Object msg) throws Exception {
                             // discard
                         }
                     });
@@ -814,12 +816,16 @@ public class LocalChannelTest {
     }
 
     @Test(expected = ConnectException.class)
-    public void testConnectionRefused() {
-        Bootstrap sb = new Bootstrap();
-        sb.group(group1)
-        .channel(LocalChannel.class)
-        .handler(new TestHandler())
-        .connect(LocalAddress.ANY).syncUninterruptibly();
+    public void testConnectionRefused() throws Throwable {
+        try {
+            Bootstrap sb = new Bootstrap();
+            sb.group(group1)
+                    .channel(LocalChannel.class)
+                    .handler(new TestHandler())
+                    .connect(LocalAddress.ANY).syncUninterruptibly();
+        } catch (CompletionException e) {
+            throw e.getCause();
+        }
     }
 
     private static final class LatchChannelFutureListener extends CountDownLatch implements ChannelFutureListener {
@@ -861,7 +867,7 @@ public class LocalChannelTest {
                     }
 
                     @Override
-                    public void channelRead0(ChannelHandlerContext ctx, ByteBuf buffer) throws Exception {
+                    public void messageReceived(ChannelHandlerContext ctx, ByteBuf buffer) throws Exception {
                         // Just drop the buffer
                     }
                 });
@@ -874,7 +880,7 @@ public class LocalChannelTest {
                         ch.pipeline().addLast(new SimpleChannelInboundHandler<ByteBuf>() {
 
                             @Override
-                            public void channelRead0(ChannelHandlerContext ctx, ByteBuf buffer) throws Exception {
+                            public void messageReceived(ChannelHandlerContext ctx, ByteBuf buffer) throws Exception {
                                 while (buffer.isReadable()) {
                                     // Fill the ChannelOutboundBuffer with multiple buffers
                                     ctx.write(buffer.readRetainedSlice(1));

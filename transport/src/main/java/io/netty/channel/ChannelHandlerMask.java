@@ -18,6 +18,14 @@ package io.netty.channel;
 import io.netty.util.concurrent.FastThreadLocal;
 import io.netty.util.internal.PlatformDependent;
 
+import io.netty.util.internal.logging.InternalLogger;
+import io.netty.util.internal.logging.InternalLoggerFactory;
+import java.lang.annotation.ElementType;
+import java.lang.annotation.Inherited;
+import java.lang.annotation.Retention;
+import java.lang.annotation.RetentionPolicy;
+import java.lang.annotation.Target;
+import java.lang.reflect.Method;
 import java.net.SocketAddress;
 import java.security.AccessController;
 import java.security.PrivilegedExceptionAction;
@@ -25,6 +33,7 @@ import java.util.Map;
 import java.util.WeakHashMap;
 
 final class ChannelHandlerMask {
+    private static final InternalLogger logger = InternalLoggerFactory.getInstance(ChannelHandlerMask.class);
 
     // Using to mask which methods must be called for a ChannelHandler.
     static final int MASK_EXCEPTION_CAUGHT = 1;
@@ -161,10 +170,37 @@ final class ChannelHandlerMask {
     @SuppressWarnings("rawtypes")
     private static boolean isSkippable(
             final Class<?> handlerType, final String methodName, final Class<?>... paramTypes) throws Exception {
-
-        return AccessController.doPrivileged((PrivilegedExceptionAction<Boolean>) () ->
-                handlerType.getMethod(methodName, paramTypes).isAnnotationPresent(ChannelHandler.Skip.class));
+        return AccessController.doPrivileged((PrivilegedExceptionAction<Boolean>) () -> {
+            Method m;
+            try {
+                m = handlerType.getMethod(methodName, paramTypes);
+            } catch (NoSuchMethodException e) {
+                if (logger.isDebugEnabled()) {
+                    logger.debug(
+                            "Class {} missing method {}, assume we can not skip execution", handlerType, methodName, e);
+                }
+                return false;
+            }
+            return m != null && m.isAnnotationPresent(Skip.class);
+        });
     }
 
     private ChannelHandlerMask() { }
+
+    /**
+     * Indicates that the annotated event handler method in {@link ChannelHandler} will not be invoked by
+     * {@link ChannelPipeline} and so <strong>MUST</strong> only be used when the {@link ChannelHandler}
+     * method does nothing except forward to the next {@link ChannelHandler} in the pipeline.
+     * <p>
+     * Note that this annotation is not {@linkplain Inherited inherited}. If a user overrides a method annotated with
+     * {@link Skip}, it will not be skipped anymore. Similarly, the user can override a method not annotated with
+     * {@link Skip} and simply pass the event through to the next handler, which reverses the behavior of the
+     * supertype.
+     * </p>
+     */
+    @Target(ElementType.METHOD)
+    @Retention(RetentionPolicy.RUNTIME)
+    @interface Skip {
+        // no value
+    }
 }
